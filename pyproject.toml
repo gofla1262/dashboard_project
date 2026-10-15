@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "streamlit>=1.61.1",
+     "pandas",
+     "plotly",
 ]
-
 [tool.uv]
 package = false
+
