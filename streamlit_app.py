@@ -6,7 +6,7 @@ import streamlit as st
 # ==========================================
 # 0. 페이지 설정 (와이드 레이아웃 적용)
 # ==========================================
-st.set_page_config(page_title="퍼널 진단 리포트", layout="wide")
+st.set_page_config(page_title="퍼널 진단 리포트", layout="wide", page_icon="📊")
 
 # ==========================================
 # 1. 페이지 헤더
@@ -15,9 +15,8 @@ st.title("퍼널 진단 리포트")
 st.caption("가입채널별 퍼널 진단 및 실제 이벤트 로그 기반 분석")
 
 # ==========================================
-# 2. 데이터 임베딩 (실제 제공된 정확한 수치 데이터)
+# 2. 데이터 임베딩 및 안전한 파일 로드 (data/ 폴더 경로 반영)
 # ==========================================
-# [데이터 1] 단계별 전환율_전체기간
 csv_funnel_data = """년월,방문,식당조회,장바구니,결제시작,주문,방문to조회,조회to장바구니,장바구니to결제,결제to주문
 2025-09,914,511,256,185,170,55.9,50.1,72.3,91.9
 2025-10,1977,1201,605,445,429,60.7,50.4,73.6,96.4
@@ -34,7 +33,6 @@ csv_funnel_data = """년월,방문,식당조회,장바구니,결제시작,주문
 
 df_funnel = pd.read_csv(io.StringIO(csv_funnel_data))
 
-# [데이터 2] 가입채널별 5단계 실데이터 (제공해주신 정확한 수치 반영)
 csv_channel_step_data = """가입채널,가입자수,방문유저수,식당조회유저수,장바구니유저수,결제시작유저수,주문완료유저수
 INSTA_첫주문쿠폰,834,834,790,615,523,516
 NAVER_검색광고,580,580,560,512,484,478
@@ -44,7 +42,6 @@ GOOGLE_앱설치,454,454,435,397,364,360
 
 df_channel_step = pd.read_csv(io.StringIO(csv_channel_step_data))
 
-# [데이터 3] 가입채널별 초기 이탈률
 csv_channel_churn_data = """가입 채널,고객 수,초기 이탈률
 organic,774,29.3%
 INSTA_첫주문쿠폰,516,59.1%
@@ -55,6 +52,17 @@ GOOGLE_앱설치,360,30.3%
 
 df_channel_churn = pd.read_csv(io.StringIO(csv_channel_churn_data))
 df_channel_churn = df_channel_churn.rename(columns=lambda x: x.strip())
+
+@st.cache_data
+def load_db_data():
+    try:
+        orders_df = pd.read_csv("data/orders.csv")
+        events_df = pd.read_csv("data/app_events.csv")
+        return orders_df, events_df
+    except Exception:
+        return None, None
+
+orders_df, events_df = load_db_data()
 
 # ==========================================
 # 2-1. 사이드바 필터 설정
@@ -71,7 +79,6 @@ selected_channels = st.sidebar.multiselect(
     "유입 경로", options=all_channels, default=all_channels
 )
 
-# 필터 적용 데이터프레임 생성 (f)
 f_funnel = df_funnel[
     (df_funnel["년월"] >= selected_months[0])
     & (df_funnel["년월"] <= selected_months[1])
@@ -100,47 +107,107 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.metric(label="1단계 : 전체 방문 수", value=f"{total_visits:,}명")
-
 with col2:
     st.metric(label="🚨 최대 병목 (조회→장바구니)", value="이탈률 분석 중")
-
 with col3:
     st.metric(label="5단계: 최종 주문 수", value=f"{total_orders:,}건")
 
 # ==========================================
-# 4. 차트 0: 전체 기간 누적 퍼널 차트 & 핵심 인사이트
+# 4. 차트 0: 전체 기간 누적 퍼널 차트 & 주별 결제 전환율 차트 (2개 열 배치)
 # ==========================================
-st.subheader("📊 전체 기간 단계별 퍼널 흐름")
+st.subheader("📊 전체 기간 단계별 퍼널 흐름 및 주별 결제 전환율")
 
-funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
-funnel_values = [
-    f_funnel["방문"].sum(),
-    f_funnel["식당조회"].sum(),
-    f_funnel["장바구니"].sum(),
-    f_funnel["결제시작"].sum(),
-    f_funnel["주문"].sum(),
-]
+funnel_col1, funnel_col2 = st.columns(2)
 
-df_total_funnel = pd.DataFrame(
-    {"단계": funnel_stages, "고객수": funnel_values}
-)
+with funnel_col1:
+    funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
+    funnel_values = [
+        f_funnel["방문"].sum(),
+        f_funnel["식당조회"].sum(),
+        f_funnel["장바구니"].sum(),
+        f_funnel["결제시작"].sum(),
+        f_funnel["주문"].sum(),
+    ]
 
-fig_funnel = px.funnel(
-    df_total_funnel,
-    x="고객수",
-    y="단계",
-    title="전체 기간 퍼널 단계별 전환 현황",
-)
-fig_funnel.update_layout(template="plotly_white")
-st.plotly_chart(fig_funnel, width="stretch")
+    df_total_funnel = pd.DataFrame(
+        {"단계": funnel_stages, "고객수": funnel_values}
+    )
+
+    fig_funnel = px.funnel(
+        df_total_funnel,
+        x="고객수",
+        y="단계",
+        title="전체 기간 퍼널 단계별 전환 현황",
+    )
+    fig_funnel.update_layout(template="plotly_white")
+    st.plotly_chart(fig_funnel, width="stretch")
+
+with funnel_col2:
+    if events_df is not None and orders_df is not None:
+        ev = events_df[events_df["event_name"] == "sign_up"].copy()
+        
+        def map_channel(row):
+            if row["traffic_source"] == "organic":
+                return "organic"
+            elif pd.notna(row["campaign_name"]):
+                return row["campaign_name"]
+            else:
+                return row["traffic_source"]
+        
+        ev["가입채널"] = ev.apply(map_channel, axis=1)
+        ev["event_dt"] = pd.to_datetime(ev["event_datetime"])
+        ev["주시작일"] = (ev["event_dt"] - pd.to_timedelta(ev["event_dt"].dt.weekday, unit="d")).dt.strftime('%Y-%m-%d')
+        
+        signup_users = ev[['customer_id', '가입채널', '주시작일']].drop_duplicates(subset=['customer_id'])
+        ordered_users = orders_df[['customer_id']].drop_duplicates()
+        ordered_users["has_ordered"] = 1
+        
+        merged_ev = signup_users.merge(ordered_users, on="customer_id", how="left")
+        merged_ev["has_ordered"] = merged_ev["has_ordered"].fillna(0)
+        
+        weekly_group = merged_ev.groupby(["주시작일", "가입채널"]).agg(
+            분모_가입고객수=("customer_id", "nunique"),
+            분자_결제고객수=("has_ordered", "sum")
+        ).reset_index()
+        
+        weekly_group["결제전환율"] = round(weekly_group["분자_결제고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
+        
+        # 미완성 최근 2개 주차 제외
+        valid_weeks = sorted(weekly_group['주시작일'].unique())
+        if len(valid_weeks) > 2:
+            target_weeks = valid_weeks[:-2]
+            weekly_group = weekly_group[weekly_group['주시작일'].isin(target_weeks)]
+    else:
+        weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_결제고객수", "결제전환율"])
+
+    weekly_group = weekly_group[weekly_group["가입채널"].isin(selected_channels)]
+
+    fig_weekly_pay = px.line(
+        weekly_group,
+        x="주시작일",
+        y="결제전환율",
+        color="가입채널",
+        markers=True,
+        title="가입채널별 주별 결제 전환율",
+        custom_data=["분모_가입고객수", "분자_결제고객수"]
+    )
+    fig_weekly_pay.update_traces(
+        hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>결제전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>결제고객수: %{customdata[1]:,}명<extra></extra>"
+    )
+    fig_weekly_pay.update_layout(
+        yaxis=dict(range=[0, 115]),
+        xaxis_title="주시작일",
+        yaxis_title="결제전환율 (%)",
+        template="plotly_white"
+    )
+    st.plotly_chart(fig_weekly_pay, width="stretch")
 
 # ==========================================
-# 5 & 6. 채널별 지표 분석 (실제 데이터 기반)
+# 5 & 6. 채널별 지표 분석
 # ==========================================
 chart_col1, chart_col2 = st.columns(2)
 
 with chart_col1:
-    # 조회 to 장바구니 전환율 계산 (장바구니유저수 / 식당조회유저수 * 100)
     f_channel_step["조회to장바구니_전환율"] = round(
         (f_channel_step["장바구니유저수"] / f_channel_step["식당조회유저수"]) * 100,
         1,
@@ -225,23 +292,20 @@ with chart_col2:
 st.subheader("📌 핵심 인사이트 & 개선 제안")
 st.markdown(
     """
-- 제공해주신 실제 이벤트 로그 기반 데이터에 따르면, **INSTA_첫주문쿠폰** 채널은 가입자(834명) 대비 장바구니 유저(615명) 및 주문 완료(516명)로 이어지는 과정에서 타 채널 대비 [조회 ➔ 장바구니] 구간의 전환 효율이 상대적으로 낮고 초기 이탈률(59.1%)이 높음.
+- 실제 이벤트 로그 기반 데이터에 따르면, **INSTA_첫주문쿠폰** 채널은 가입자 대비 장바구니 및 주문 완료로 이어지는 과정에서 타 채널 대비 [조회 ➔ 장바구니] 구간의 전환 효율이 상대적으로 낮고 초기 이탈률이 높음.
 - 대규모 유입 모수가 실제 적극적인 장바구니 및 구매 행동으로 이어지도록 온보딩 UX와 프로모션 혜택 노출 방식을 개선할 필요가 있음.
 """
 )
 
 # ==========================================
-# 8. 집단 비교 영역 (실제 제공된 5단계 유저수 기반)
+# 8. 집단 비교 영역
 # ==========================================
 st.divider()
 st.subheader("👥 가입채널별 집단 비교 분석")
 
-comparison_basis = st.radio("비교 기준", options=["가입채널"], horizontal=True)
-
 group_df = f_channel_step.copy()
 group_col = "가입채널"
 
-# 표본수 500개 미만 집단 경고 (가입자수 기준)
 low_sample_groups = group_df[group_df["가입자수"] < 500][group_col].tolist()
 if low_sample_groups:
     st.caption(
@@ -373,7 +437,6 @@ for i, (idx, row) in enumerate(f_funnel.iterrows()):
                 None,
             )
         else:
-            # 채널별 실제 비율을 반영한 주별 시계열 분배
             ch_row = f_channel_step[
                 f_channel_step["가입채널"] == selected_group
             ]
