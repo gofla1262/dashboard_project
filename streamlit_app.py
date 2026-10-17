@@ -4,9 +4,83 @@ import plotly.express as px
 import streamlit as st
 
 # ==========================================
-# 0. 페이지 설정 (와이드 레이아웃 적용)
+# 0. Plotly 전역 컬러 테마 설정
+# ==========================================
+ACCENT, GRAY = "#1F3A5F", "#BDBDBD"
+px.defaults.color_discrete_map = {
+    "INSTA_첫주문쿠폰": ACCENT, 
+    "organic": "#8C8C8C", 
+    "NAVER_검색광고": "#A6A6A6",
+    "GOOGLE_앱설치": GRAY, 
+    "친구초대": "#DADADA", 
+}
+px.defaults.color_discrete_sequence = [GRAY]
+
+# ==========================================
+# 0-1. 페이지 설정 및 테마 오버라이딩 CSS
 # ==========================================
 st.set_page_config(page_title="퍼널 진단 리포트", layout="wide", page_icon="📊")
+
+st.markdown(
+    f"""
+    <style>
+        /* 1. Streamlit 루트 프라이머리 컬러 변수 재정의 */
+        :root {{
+            --primary-color: {ACCENT} !important;
+        }}
+
+        /* 2. 사이드바 슬라이더 전체 트랙 & 슬라이더 버튼 색상 강제 오버라이드 */
+        div[data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"] {{
+            background-color: {ACCENT} !important;
+            border-color: {ACCENT} !important;
+            box-shadow: none !important;
+        }}
+        div[data-testid="stSidebar"] [data-baseweb="slider"] div > div > div {{
+            background-color: {ACCENT} !important;
+        }}
+        div[data-testid="stSidebar"] [data-baseweb="slider"] div[data-testid="stTickBar"] ~ div {{
+            background-color: {ACCENT} !important;
+        }}
+        div[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+        div[data-testid="stSidebar"] .stSlider span {{
+            color: {ACCENT} !important;
+        }}
+
+        /* 3. 사이드바 멀티셀렉트 선택 태그(Pill) 및 텍스트/아이콘 색상 강제 오버라이드 */
+        div[data-testid="stSidebar"] [data-baseweb="tag"] {{
+            background-color: {ACCENT} !important;
+            border-color: {ACCENT} !important;
+        }}
+        div[data-testid="stSidebar"] [data-baseweb="tag"] span {{
+            color: #ffffff !important;
+        }}
+        div[data-testid="stSidebar"] [data-baseweb="tag"] svg {{
+            fill: #ffffff !important;
+        }}
+
+        /* 4. 멀티셀렉트 포커스/호버 테두리 색상 */
+        div[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
+            border-color: #E0E0E0 !important;
+        }}
+        div[data-testid="stSidebar"] div[data-baseweb="select"] > div:focus-within, 
+        div[data-testid="stSidebar"] div[data-baseweb="select"] > div:hover {{
+            border-color: {ACCENT} !important;
+        }}
+
+        /* 5. 상단 KPI 카드 3개 높이 및 형태 완벽 균일화 */
+        div[data-testid="stMetric"] {{
+            min-height: 110px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+        }}
+        div[data-testid="stMetricContainer"] {{
+            height: 100% !important;
+        }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ==========================================
 # 1. 페이지 헤더
@@ -122,18 +196,44 @@ tab1, tab2, tab3, tab4 = st.tabs(["📋 개요", "🔍 탐색", "💡 액션", "
 with tab1:
     total_visits = f_funnel["방문"].sum()
     total_orders = f_funnel["주문"].sum()
+    total_conversion_rate = (total_orders / total_visits * 100) if total_visits > 0 else 0
+
+    # INSTA_첫주문쿠폰 주문 전환율 계산 (이벤트 로그 기반)
+    insta_rate_str = "데이터 없음"
+    if events_df is not None and orders_df is not None:
+        ev_insta = events_df[events_df["event_name"] == "sign_up"].copy()
+        
+        def map_ch_insta(row):
+            if row["traffic_source"] == "organic":
+                return "organic"
+            elif pd.notna(row["campaign_name"]):
+                return row["campaign_name"]
+            else:
+                return row["traffic_source"]
+        
+        ev_insta["가입채널"] = ev_insta.apply(map_ch_insta, axis=1)
+        insta_signups = ev_insta[ev_insta["가입채널"] == "INSTA_첫주문쿠폰"]
+        insta_denom = insta_signups["customer_id"].nunique()
+        if insta_denom > 0:
+            ordered_cids = set(orders_df["customer_id"].unique())
+            insta_num = insta_signups[insta_signups["customer_id"].isin(ordered_cids)]["customer_id"].nunique()
+            insta_rate = (insta_num / insta_denom) * 100
+            insta_rate_str = f"{insta_rate:.1f}%"
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric(label="1단계 : 전체 방문 수", value=f"{total_visits:,}명")
+        with st.container(border=True):
+            st.metric(label="1단계 : 전체 방문 수", value=f"{total_visits:,}명")
     with col2:
-        st.metric(label="🚨 최대 병목 (조회→장바구니)", value="이탈률 분석 중")
+        with st.container(border=True):
+            st.metric(label="📈 전체 누적 전환율 (방문→주문)", value=f"{total_conversion_rate:.1f}%")
     with col3:
-        st.metric(label="5단계: 최종 주문 수", value=f"{total_orders:,}건")
+        with st.container(border=True):
+            st.metric(label="🎯 INSTA_첫주문쿠폰 주문 전환율", value=insta_rate_str)
 
     st.markdown("---")
-    st.subheader("📊 전체 기간 단계별 퍼널 흐름 및 주별 결제 전환율")
+    st.subheader("📊 전체 기간 단계별 퍼널 흐름 및 주별 주문 전환율")
 
     funnel_col1, funnel_col2 = st.columns(2)
 
@@ -185,36 +285,36 @@ with tab1:
             
             weekly_group = merged_ev.groupby(["주시작일", "가입채널"]).agg(
                 분모_가입고객수=("customer_id", "nunique"),
-                분자_결제고객수=("has_ordered", "sum")
+                분자_주문고객수=("has_ordered", "sum")
             ).reset_index()
             
-            weekly_group["결제전환율"] = round(weekly_group["분자_결제고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
+            weekly_group["주문전환율"] = round(weekly_group["분자_주문고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
             
             valid_weeks = sorted(weekly_group['주시작일'].unique())
             if len(valid_weeks) > 2:
                 target_weeks = valid_weeks[:-2]
                 weekly_group = weekly_group[weekly_group['주시작일'].isin(target_weeks)]
         else:
-            weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_결제고객수", "결제전환율"])
+            weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_주문고객수", "주문전환율"])
 
         weekly_group = weekly_group[weekly_group["가입채널"].isin(selected_channels)]
 
         fig_weekly_pay = px.line(
             weekly_group,
             x="주시작일",
-            y="결제전환율",
+            y="주문전환율",
             color="가입채널",
             markers=True,
-            title="가입채널별 주별 결제 전환율",
-            custom_data=["분모_가입고객수", "분자_결제고객수"]
+            title="가입채널별 주별 주문 전환율",
+            custom_data=["분모_가입고객수", "분자_주문고객수"]
         )
         fig_weekly_pay.update_traces(
-            hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>결제전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>결제고객수: %{customdata[1]:,}명<extra></extra>"
+            hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>주문전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>주문고객수: %{customdata[1]:,}명<extra></extra>"
         )
         fig_weekly_pay.update_layout(
             yaxis=dict(range=[0, 115]),
             xaxis_title="주시작일",
-            yaxis_title="결제전환율 (%)",
+            yaxis_title="주문전환율 (%)",
             template="plotly_white"
         )
         st.plotly_chart(fig_weekly_pay, width="stretch")
@@ -256,7 +356,7 @@ with tab1:
             channel_order_summary = pd.DataFrame(columns=['가입채널', 'denominator', 'numerator', 'conversion_rate'])
 
         colors1 = [
-            "#1f77b4" if ch == "INSTA_첫주문쿠폰" else "#d3d3d3"
+            ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
             for ch in channel_order_summary["가입채널"]
         ]
         
@@ -272,7 +372,7 @@ with tab1:
             marker_color=colors1,
             texttemplate="%{text:.1f}%",
             textposition="outside",
-            hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>결제 고객수: %{customdata[1]:,}명<extra></extra>"
+            hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>주문 고객수: %{customdata[1]:,}명<extra></extra>"
         )
         fig1.update_layout(
             yaxis=dict(
@@ -298,7 +398,7 @@ with tab1:
             by="초기 이탈률_num", ascending=False
         )
         colors2 = [
-            "#d62728" if ch == "INSTA_첫주문쿠폰" else "#d3d3d3"
+            ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
             for ch in df_churn_filtered["가입 채널"]
         ]
 
@@ -583,7 +683,7 @@ with tab2:
 
     df_chart2 = pd.DataFrame(stack_records)
 
-    color_map = {selected_group: "#1f77b4", "그 외 집단": "#d3d3d3"}
+    color_map = {selected_group: ACCENT, "그 외 집단": GRAY}
 
     fig_drill_2 = px.bar(
         df_chart2,
@@ -625,21 +725,21 @@ with tab3:
         st.markdown(
             """
 **문제:**  
-2026년 1월부터 전체 주문 전환율이 급격히 하락함.  
-Instagram 가입 유저 모수는 크나, 장바구니 담기 및 최종 결제 전환으로 이어지는 유입 힘이 약함.  
+- 2026년 1월부터 전체 주문 전환율이 하락세를 보임.  
 
 **근거:**  
-전환율 하락 시점이 2026년 1월 Instagram 프로모션 시작 시점과 정확히 일치함.  
-Instagram 채널의 30일 이내 초기 이탈률이 59.1%로 타 채널 대비 상당히 높게 나타남.  
+- 전환율 하락 시점이 2026년 1월 Instagram 프로모션 시작 시점과 일치.  
+- Instagram 가입 유저 모수는 크나, 장바구니 담기 및 최종 결제 전환으로 이어지는 유입 힘이 약함.  
+- Instagram 채널의 30일 이내 초기 이탈률이 59.1%로 타 채널 대비 상당히 높게 나타남.  
 
 **성격:**  
-신규 유입 채널의 퀄리티 문제 및 온보딩/리텐션 부실  
-볼륨(가입자 수) 중심의 마케팅으로 인해 결제 의도가 낮은 유저가 다수 유입되었으나, 이들을 정착시킬 UX/UI 및 프로모션 장치가 부재함.  
+- 신규 유입 채널의 퀄리티 문제 및 온보딩/리텐션 부실  
+- 볼륨(가입자 수) 중심의 마케팅으로 인해 결제 의도가 낮은 유저가 다수 유입되었으나, 이들을 정착시킬 UX/UI 및 프로모션 장치가 부재함.  
 
 **액션:**  
-프로모션 구조 수정: 가입 모수가 큰 Instagram 채널 유저를 결제까지 유도할 수 있도록 프로모션 혜택 단계를 재설계.  
-온보딩 UX/UI 개선: 가입 후 장바구니 담기 및 첫 구매 전환을 돕는 가이드/인센티브 화면 개선.  
-CRM 프로모션 강화: 초기 이탈 방지 및 리텐션율 제고를 위한 30일 이내 맞춤형 CRM 메시징/쿠폰 타겟팅 실행.  
+- 프로모션 구조 수정: 가입 모수가 큰 Instagram 채널 유저를 결제까지 유도할 수 있도록 프로모션 혜택 단계를 재설계.  
+- 온보딩 UX/UI 개선: 가입 후 장바구니 담기 및 첫 구매 전환을 돕는 가이드/인센티브 화면 개선.  
+- CRM 프로모션 강화: 초기 이탈 방지 및 리텐션율 제고를 위한 30일 이내 맞춤형 CRM 메시징/쿠폰 타겟팅 실행.  
 
 **우선순위:**  
 [상 / High]  
@@ -672,7 +772,7 @@ CRM 프로모션 강화: 초기 이탈 방지 및 리텐션율 제고를 위한 
                 ordered_cids = set(orders_df["customer_id"].unique())
                 num = target_signups[target_signups["customer_id"].isin(ordered_cids)]["customer_id"].nunique()
                 rate = round((num / denom) * 100, 1)
-                kpi_value_str = f"{rate:.1f}% ({num:,}명 / {denom:,}명)"
+                kpi_value_str = f"{rate:.1f}%"
             else:
                 kpi_value_str = "데이터 없음"
         else:
