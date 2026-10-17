@@ -41,7 +41,7 @@ st.markdown(
         div[data-testid="stSidebar"] [data-baseweb="slider"] div[data-testid="stTickBar"] ~ div {{
             background-color: {ACCENT} !important;
         }}
-        div[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+        div[data-testid="stSidebar"] div[data-testid="stWidgetLabel"] p,
         div[data-testid="stSidebar"] .stSlider span {{
             color: {ACCENT} !important;
         }}
@@ -67,7 +67,7 @@ st.markdown(
             border-color: {ACCENT} !important;
         }}
 
-        /* 5. 상단 KPI 카드 3개 높이 및 형태 완벽 균일화 */
+        /* 5. 상단 KPI 카드 높이 및 형태 완벽 균일화 */
         div[data-testid="stMetric"] {{
             min-height: 110px !important;
             display: flex !important;
@@ -238,198 +238,202 @@ with tab1:
     funnel_col1, funnel_col2 = st.columns(2)
 
     with funnel_col1:
-        funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
-        funnel_values = [
-            f_funnel["방문"].sum(),
-            f_funnel["식당조회"].sum(),
-            f_funnel["장바구니"].sum(),
-            f_funnel["결제시작"].sum(),
-            f_funnel["주문"].sum(),
-        ]
+        with st.container(border=True):
+            funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
+            funnel_values = [
+                f_funnel["방문"].sum(),
+                f_funnel["식당조회"].sum(),
+                f_funnel["장바구니"].sum(),
+                f_funnel["결제시작"].sum(),
+                f_funnel["주문"].sum(),
+            ]
 
-        df_total_funnel = pd.DataFrame(
-            {"단계": funnel_stages, "고객수": funnel_values}
-        )
+            df_total_funnel = pd.DataFrame(
+                {"단계": funnel_stages, "고객수": funnel_values}
+            )
 
-        fig_funnel = px.funnel(
-            df_total_funnel,
-            x="고객수",
-            y="단계",
-            title="전체 기간 퍼널 단계별 전환 현황",
-        )
-        fig_funnel.update_layout(template="plotly_white")
-        st.plotly_chart(fig_funnel, width="stretch")
+            fig_funnel = px.funnel(
+                df_total_funnel,
+                x="고객수",
+                y="단계",
+                title="전체 기간 퍼널 단계별 전환 현황",
+            )
+            fig_funnel.update_layout(template="plotly_white")
+            st.plotly_chart(fig_funnel, width="stretch")
 
     with funnel_col2:
-        if events_df is not None and orders_df is not None:
-            ev = events_df[events_df["event_name"] == "sign_up"].copy()
-            
-            def map_channel(row):
-                if row["traffic_source"] == "organic":
-                    return "organic"
-                elif pd.notna(row["campaign_name"]):
-                    return row["campaign_name"]
-                else:
-                    return row["traffic_source"]
-            
-            ev["가입채널"] = ev.apply(map_channel, axis=1)
-            ev["event_dt"] = pd.to_datetime(ev["event_datetime"])
-            ev["주시작일"] = (ev["event_dt"] - pd.to_timedelta(ev["event_dt"].dt.weekday, unit="d")).dt.strftime('%Y-%m-%d')
-            
-            signup_users = ev[['customer_id', '가입채널', '주시작일']].drop_duplicates(subset=['customer_id'])
-            ordered_users = orders_df[['customer_id']].drop_duplicates()
-            ordered_users["has_ordered"] = 1
-            
-            merged_ev = signup_users.merge(ordered_users, on="customer_id", how="left")
-            merged_ev["has_ordered"] = merged_ev["has_ordered"].fillna(0)
-            
-            weekly_group = merged_ev.groupby(["주시작일", "가입채널"]).agg(
-                분모_가입고객수=("customer_id", "nunique"),
-                분자_주문고객수=("has_ordered", "sum")
-            ).reset_index()
-            
-            weekly_group["주문전환율"] = round(weekly_group["분자_주문고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
-            
-            valid_weeks = sorted(weekly_group['주시작일'].unique())
-            if len(valid_weeks) > 2:
-                target_weeks = valid_weeks[:-2]
-                weekly_group = weekly_group[weekly_group['주시작일'].isin(target_weeks)]
-        else:
-            weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_주문고객수", "주문전환율"])
+        with st.container(border=True):
+            if events_df is not None and orders_df is not None:
+                ev = events_df[events_df["event_name"] == "sign_up"].copy()
+                
+                def map_channel(row):
+                    if row["traffic_source"] == "organic":
+                        return "organic"
+                    elif pd.notna(row["campaign_name"]):
+                        return row["campaign_name"]
+                    else:
+                        return row["traffic_source"]
+                
+                ev["가입채널"] = ev.apply(map_channel, axis=1)
+                ev["event_dt"] = pd.to_datetime(ev["event_datetime"])
+                ev["주시작일"] = (ev["event_dt"] - pd.to_timedelta(ev["event_dt"].dt.weekday, unit="d")).dt.strftime('%Y-%m-%d')
+                
+                signup_users = ev[['customer_id', '가입채널', '주시작일']].drop_duplicates(subset=['customer_id'])
+                ordered_users = orders_df[['customer_id']].drop_duplicates()
+                ordered_users["has_ordered"] = 1
+                
+                merged_ev = signup_users.merge(ordered_users, on="customer_id", how="left")
+                merged_ev["has_ordered"] = merged_ev["has_ordered"].fillna(0)
+                
+                weekly_group = merged_ev.groupby(["주시작일", "가입채널"]).agg(
+                    분모_가입고객수=("customer_id", "nunique"),
+                    분자_주문고객수=("has_ordered", "sum")
+                ).reset_index()
+                
+                weekly_group["주문전환율"] = round(weekly_group["분자_주문고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
+                
+                valid_weeks = sorted(weekly_group['주시작일'].unique())
+                if len(valid_weeks) > 2:
+                    target_weeks = valid_weeks[:-2]
+                    weekly_group = weekly_group[weekly_group['주시작일'].isin(target_weeks)]
+            else:
+                weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_주문고객수", "주문전환율"])
 
-        weekly_group = weekly_group[weekly_group["가입채널"].isin(selected_channels)]
+            weekly_group = weekly_group[weekly_group["가입채널"].isin(selected_channels)]
 
-        fig_weekly_pay = px.line(
-            weekly_group,
-            x="주시작일",
-            y="주문전환율",
-            color="가입채널",
-            markers=True,
-            title="가입채널별 주별 주문 전환율",
-            custom_data=["분모_가입고객수", "분자_주문고객수"]
-        )
-        fig_weekly_pay.update_traces(
-            hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>주문전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>주문고객수: %{customdata[1]:,}명<extra></extra>"
-        )
-        fig_weekly_pay.update_layout(
-            yaxis=dict(range=[0, 115]),
-            xaxis_title="주시작일",
-            yaxis_title="주문전환율 (%)",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig_weekly_pay, width="stretch")
+            fig_weekly_pay = px.line(
+                weekly_group,
+                x="주시작일",
+                y="주문전환율",
+                color="가입채널",
+                markers=True,
+                title="가입채널별 주별 주문 전환율",
+                custom_data=["분모_가입고객수", "분자_주문고객수"]
+            )
+            fig_weekly_pay.update_traces(
+                hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>주문전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>주문고객수: %{customdata[1]:,}명<extra></extra>"
+            )
+            fig_weekly_pay.update_layout(
+                yaxis=dict(range=[0, 115]),
+                xaxis_title="주시작일",
+                yaxis_title="주문전환율 (%)",
+                template="plotly_white"
+            )
+            st.plotly_chart(fig_weekly_pay, width="stretch")
 
     st.markdown("---")
     st.subheader("📈 가입채널별 주요 지표 분석")
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
-        if events_df is not None and orders_df is not None:
-            ev_signup = events_df[events_df["event_name"] == "sign_up"].copy()
-            
-            def map_channel(row):
-                if row["traffic_source"] == "organic":
-                    return "organic"
-                elif pd.notna(row["campaign_name"]):
-                    return row["campaign_name"]
-                else:
-                    return row["traffic_source"]
-            
-            ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
-            
-            signup_users_df = ev_signup[['customer_id', '가입채널']].drop_duplicates()
-            ordered_users_df = orders_df[['customer_id']].drop_duplicates()
-            ordered_users_df['is_ordered'] = 1
-            
-            merged_order_df = pd.merge(signup_users_df, ordered_users_df, on='customer_id', how='left')
-            merged_order_df['is_ordered'] = merged_order_df['is_ordered'].fillna(0)
-            
-            channel_order_summary = merged_order_df.groupby('가입채널').agg(
-                denominator=('customer_id', 'nunique'),
-                numerator=('is_ordered', 'sum')
-            ).reset_index()
-            
-            channel_order_summary['conversion_rate'] = round((channel_order_summary['numerator'] / channel_order_summary['denominator']) * 100, 1)
-            channel_order_summary = channel_order_summary[channel_order_summary['가입채널'].isin(selected_channels)]
-            channel_order_summary = channel_order_summary.sort_values(by='conversion_rate', ascending=False)
-        else:
-            channel_order_summary = pd.DataFrame(columns=['가입채널', 'denominator', 'numerator', 'conversion_rate'])
+        with st.container(border=True):
+            if events_df is not None and orders_df is not None:
+                ev_signup = events_df[events_df["event_name"] == "sign_up"].copy()
+                
+                def map_channel(row):
+                    if row["traffic_source"] == "organic":
+                        return "organic"
+                    elif pd.notna(row["campaign_name"]):
+                        return row["campaign_name"]
+                    else:
+                        return row["traffic_source"]
+                
+                ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
+                
+                signup_users_df = ev_signup[['customer_id', '가입채널']].drop_duplicates()
+                ordered_users_df = orders_df[['customer_id']].drop_duplicates()
+                ordered_users_df['is_ordered'] = 1
+                
+                merged_order_df = pd.merge(signup_users_df, ordered_users_df, on='customer_id', how='left')
+                merged_order_df['is_ordered'] = merged_order_df['is_ordered'].fillna(0)
+                
+                channel_order_summary = merged_order_df.groupby('가입채널').agg(
+                    denominator=('customer_id', 'nunique'),
+                    numerator=('is_ordered', 'sum')
+                ).reset_index()
+                
+                channel_order_summary['conversion_rate'] = round((channel_order_summary['numerator'] / channel_order_summary['denominator']) * 100, 1)
+                channel_order_summary = channel_order_summary[channel_order_summary['가입채널'].isin(selected_channels)]
+                channel_order_summary = channel_order_summary.sort_values(by='conversion_rate', ascending=False)
+            else:
+                channel_order_summary = pd.DataFrame(columns=['가입채널', 'denominator', 'numerator', 'conversion_rate'])
 
-        colors1 = [
-            ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
-            for ch in channel_order_summary["가입채널"]
-        ]
-        
-        fig1 = px.bar(
-            channel_order_summary,
-            x="가입채널",
-            y="conversion_rate",
-            title="가입채널별 주문전환율 (%)",
-            text="conversion_rate",
-            custom_data=["denominator", "numerator"]
-        )
-        fig1.update_traces(
-            marker_color=colors1,
-            texttemplate="%{text:.1f}%",
-            textposition="outside",
-            hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>주문 고객수: %{customdata[1]:,}명<extra></extra>"
-        )
-        fig1.update_layout(
-            yaxis=dict(
-                range=[
-                    0,
-                    max(channel_order_summary["conversion_rate"]) * 1.2
-                    if not channel_order_summary.empty
-                    else 100,
-                ]
-            ),
-            xaxis_title="가입채널",
-            yaxis_title="주문전환율 (%)",
-            template="plotly_white",
-        )
-        st.plotly_chart(fig1, width="stretch")
+            colors1 = [
+                ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
+                for ch in channel_order_summary["가입채널"]
+            ]
+            
+            fig1 = px.bar(
+                channel_order_summary,
+                x="가입채널",
+                y="conversion_rate",
+                title="가입채널별 주문전환율 (%)",
+                text="conversion_rate",
+                custom_data=["denominator", "numerator"]
+            )
+            fig1.update_traces(
+                marker_color=colors1,
+                texttemplate="%{text:.1f}%",
+                textposition="outside",
+                hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>주문 고객수: %{customdata[1]:,}명<extra></extra>"
+            )
+            fig1.update_layout(
+                yaxis=dict(
+                    range=[
+                        0,
+                        max(channel_order_summary["conversion_rate"]) * 1.2
+                        if not channel_order_summary.empty
+                        else 100,
+                    ]
+                ),
+                xaxis_title="가입채널",
+                yaxis_title="주문전환율 (%)",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig1, width="stretch")
 
     with chart_col2:
-        df_churn_filtered = f_churn.copy()
-        df_churn_filtered["초기 이탈률_num"] = (
-            df_churn_filtered["초기 이탈률"].str.rstrip("%").astype(float)
-        )
-        df_churn_filtered = df_churn_filtered.sort_values(
-            by="초기 이탈률_num", ascending=False
-        )
-        colors2 = [
-            ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
-            for ch in df_churn_filtered["가입 채널"]
-        ]
+        with st.container(border=True):
+            df_churn_filtered = f_churn.copy()
+            df_churn_filtered["초기 이탈률_num"] = (
+                df_churn_filtered["초기 이탈률"].str.rstrip("%").astype(float)
+            )
+            df_churn_filtered = df_churn_filtered.sort_values(
+                by="초기 이탈률_num", ascending=False
+            )
+            colors2 = [
+                ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
+                for ch in df_churn_filtered["가입 채널"]
+            ]
 
-        fig2 = px.bar(
-            df_churn_filtered,
-            x="가입 채널",
-            y="초기 이탈률_num",
-            title="가입채널별 초기 이탈률",
-            text="초기 이탈률_num",
-            custom_data=["고객 수"],
-        )
-        fig2.update_traces(
-            marker_color=colors2,
-            texttemplate="%{text:.1f}%",
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>초기 이탈률: %{y:.1f}%<br>고객 수 (n): %{customdata[0]:,}<extra></extra>",
-        )
-        fig2.update_layout(
-            yaxis=dict(
-                range=[
-                    0,
-                    max(df_churn_filtered["초기 이탈률_num"]) * 1.15
-                    if not df_churn_filtered.empty
-                    else 100,
-                ]
-            ),
-            xaxis_title="가입 채널",
-            yaxis_title="초기 이탈률 (%)",
-            template="plotly_white",
-        )
-        st.plotly_chart(fig2, width="stretch")
+            fig2 = px.bar(
+                df_churn_filtered,
+                x="가입 채널",
+                y="초기 이탈률_num",
+                title="가입채널별 초기 이탈률",
+                text="초기 이탈률_num",
+                custom_data=["고객 수"],
+            )
+            fig2.update_traces(
+                marker_color=colors2,
+                texttemplate="%{text:.1f}%",
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>초기 이탈률: %{y:.1f}%<br>고객 수 (n): %{customdata[0]:,}<extra></extra>",
+            )
+            fig2.update_layout(
+                yaxis=dict(
+                    range=[
+                        0,
+                        max(df_churn_filtered["초기 이탈률_num"]) * 1.15
+                        if not df_churn_filtered.empty
+                        else 100,
+                    ]
+                ),
+                xaxis_title="가입 채널",
+                yaxis_title="초기 이탈률 (%)",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig2, width="stretch")
 
 # ------------------------------------------
 # [TAB 2] 탐색
