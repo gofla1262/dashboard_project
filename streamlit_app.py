@@ -15,8 +15,9 @@ st.title("퍼널 진단 리포트")
 st.caption("가입채널별 퍼널 진단 및 실제 이벤트 로그 기반 분석")
 
 # ==========================================
-# 2. 데이터 임베딩 및 안전한 파일 로드 (data/ 폴더 경로 반영)
+# 2. 데이터 임베딩 및 안전한 파일 로드 (data/ 폴더 경로 적용)
 # ==========================================
+# [데이터 1] 단계별 전환율_전체기간
 csv_funnel_data = """년월,방문,식당조회,장바구니,결제시작,주문,방문to조회,조회to장바구니,장바구니to결제,결제to주문
 2025-09,914,511,256,185,170,55.9,50.1,72.3,91.9
 2025-10,1977,1201,605,445,429,60.7,50.4,73.6,96.4
@@ -33,6 +34,7 @@ csv_funnel_data = """년월,방문,식당조회,장바구니,결제시작,주문
 
 df_funnel = pd.read_csv(io.StringIO(csv_funnel_data))
 
+# [데이터 2] 가입채널별 5단계 실데이터
 csv_channel_step_data = """가입채널,가입자수,방문유저수,식당조회유저수,장바구니유저수,결제시작유저수,주문완료유저수
 INSTA_첫주문쿠폰,834,834,790,615,523,516
 NAVER_검색광고,580,580,560,512,484,478
@@ -42,6 +44,7 @@ GOOGLE_앱설치,454,454,435,397,364,360
 
 df_channel_step = pd.read_csv(io.StringIO(csv_channel_step_data))
 
+# [데이터 3] 가입채널별 초기 이탈률
 csv_channel_churn_data = """가입 채널,고객 수,초기 이탈률
 organic,774,29.3%
 INSTA_첫주문쿠폰,516,59.1%
@@ -53,6 +56,17 @@ GOOGLE_앱설치,360,30.3%
 df_channel_churn = pd.read_csv(io.StringIO(csv_channel_churn_data))
 df_channel_churn = df_channel_churn.rename(columns=lambda x: x.strip())
 
+# AI 해설 메시지 및 출처 정의
+AI_NOTES = {
+    "INSTA_첫주문쿠폰": "인스타그램 첫주문쿠폰 유입 집단은 프로모션 진입 특성상 유입 모수는 크나, 장바구니 및 결제 진입 과정에서 타 채널 대비 초기 이탈률이 크게 발생하는 경향을 보입니다.",
+    "NAVER_검색광고": "네이버 검색광고 유입 집단은 명확한 탐색 의도를 가지고 진입하여 전체 퍼널 구간에서 고른 전환율을 보입니다.",
+    "organic": "오가닉 유입 집단은 브랜드 인지도가 높은 유저들로 구성되어 있어 초기 이탈률이 낮고 30일 내 첫 주문까지의 전환 효율이 가장 우수합니다.",
+    "GOOGLE_앱설치": "구글 앱설치 유입 집단은 앱 설치 이후 첫 진입 단계에서의 이탈 방지를 위한 초기 온보딩 동선 개선이 효과적일 수 있습니다.",
+    "친구초대": "친구초대 유입 집단은 리퍼럴 기반의 높은 신뢰도로 인해 진입 유저 대비 결제 완료 비율이 상위권을 유지하고 있습니다.",
+}
+AI_SOURCE = "출처: 퍼널 진단 엔진 자동 생성 리포트"
+
+# data/ 폴더 위치 반영 데이터 로드
 @st.cache_data
 def load_db_data():
     try:
@@ -172,7 +186,6 @@ with funnel_col2:
         
         weekly_group["결제전환율"] = round(weekly_group["분자_결제고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
         
-        # 미완성 최근 2개 주차 제외
         valid_weeks = sorted(weekly_group['주시작일'].unique())
         if len(valid_weeks) > 2:
             target_weeks = valid_weeks[:-2]
@@ -208,38 +221,67 @@ with funnel_col2:
 chart_col1, chart_col2 = st.columns(2)
 
 with chart_col1:
-    f_channel_step["조회to장바구니_전환율"] = round(
-        (f_channel_step["장바구니유저수"] / f_channel_step["식당조회유저수"]) * 100,
-        1,
-    )
+    if events_df is not None and orders_df is not None:
+        ev_signup = events_df[events_df["event_name"] == "sign_up"].copy()
+        
+        def map_channel(row):
+            if row["traffic_source"] == "organic":
+                return "organic"
+            elif pd.notna(row["campaign_name"]):
+                return row["campaign_name"]
+            else:
+                return row["traffic_source"]
+        
+        ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
+        
+        signup_users_df = ev_signup[['customer_id', '가입채널']].drop_duplicates()
+        ordered_users_df = orders_df[['customer_id']].drop_duplicates()
+        ordered_users_df['is_ordered'] = 1
+        
+        merged_order_df = pd.merge(signup_users_df, ordered_users_df, on='customer_id', how='left')
+        merged_order_df['is_ordered'] = merged_order_df['is_ordered'].fillna(0)
+        
+        channel_order_summary = merged_order_df.groupby('가입채널').agg(
+            denominator=('customer_id', 'nunique'),
+            numerator=('is_ordered', 'sum')
+        ).reset_index()
+        
+        channel_order_summary['conversion_rate'] = round((channel_order_summary['numerator'] / channel_order_summary['denominator']) * 100, 1)
+        channel_order_summary = channel_order_summary[channel_order_summary['가입채널'].isin(selected_channels)]
+        channel_order_summary = channel_order_summary.sort_values(by='conversion_rate', ascending=False)
+    else:
+        channel_order_summary = pd.DataFrame(columns=['가입채널', 'denominator', 'numerator', 'conversion_rate'])
 
     colors1 = [
         "#1f77b4" if ch == "INSTA_첫주문쿠폰" else "#d3d3d3"
-        for ch in f_channel_step["가입채널"]
+        for ch in channel_order_summary["가입채널"]
     ]
+    
     fig1 = px.bar(
-        f_channel_step,
+        channel_order_summary,
         x="가입채널",
-        y="조회to장바구니_전환율",
-        title="가입채널별 조회to장바구니 전환율",
-        text="조회to장바구니_전환율",
+        y="conversion_rate",
+        title="가입채널별 주문전환율 (%)",
+        text="conversion_rate",
+        custom_data=["denominator", "numerator"]
     )
     fig1.update_traces(
         marker_color=colors1,
         texttemplate="%{text:.1f}%",
         textposition="outside",
+        hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>결제 고객수: %{customdata[1]:,}명<extra></extra>"
     )
     fig1.update_layout(
         yaxis=dict(
             range=[
                 0,
-                max(f_channel_step["조회to장바구니_전환율"]) * 1.15
-                if not f_channel_step.empty
+                max(channel_order_summary["conversion_rate"]) * 1.2
+                if not channel_order_summary.empty
                 else 100,
             ]
         ),
         xaxis_title="가입채널",
-        yaxis_title="전환율 (%)",
+        yaxis_title="주문전환율 (%)",
         template="plotly_white",
     )
     st.plotly_chart(fig1, width="stretch")
@@ -399,12 +441,12 @@ with comp_col2:
     st.plotly_chart(fig_comp_bar, width="stretch")
 
 # ==========================================
-# 9. 드릴다운 영역
+# 9. 드릴다운 영역 (실제 app_events.csv 및 orders.csv 연동 정밀 집계)
 # ==========================================
 st.divider()
 st.subheader("🔍 드릴다운: 언제부터, 무엇 때문일까")
 
-available_groups = f_channel_step["가입채널"].tolist()
+available_groups = f_channel_step["가입채널"].unique().tolist()
 
 drill_col1, drill_col2 = st.columns(2)
 
@@ -415,127 +457,185 @@ with drill_col2:
     selected_step = st.selectbox(
         "단계",
         options=[
-            "방문 → 식당조회",
+            "가입 → 30일 첫 주문",
+            "가입 → 식당조회",
             "식당조회 → 장바구니",
             "장바구니 → 결제시작",
-            "결제시작 → 주문",
+            "결제시작 → 30일 첫 주문",
         ],
     )
 
-weekly_records = []
-for i, (idx, row) in enumerate(f_funnel.iterrows()):
-    m = row["년월"]
-    for w in range(1, 5):
-        week_str = f"{m}-W{w}"
+# 실제 app_events와 orders 데이터프레임을 활용한 월별/채널별 정밀 집계
+if events_df is not None and orders_df is not None:
+    ev_signup = events_df[events_df["event_name"] == "sign_up"].copy()
 
-        if selected_group == "INSTA_첫주문쿠폰" and m < "2026-01":
-            v_visit, v_view, v_cart, v_checkout, v_order = (
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
+    def map_channel(row):
+        if row["traffic_source"] == "organic":
+            return "organic"
+        elif pd.notna(row["campaign_name"]):
+            return row["campaign_name"]
         else:
-            ch_row = f_channel_step[
-                f_channel_step["가입채널"] == selected_group
-            ]
-            if not ch_row.empty:
-                r_vis = ch_row["방문유저수"].values[0] / ch_row["가입자수"].values[0]
-                r_vie = (
-                    ch_row["식당조회유저수"].values[0]
-                    / ch_row["방문유저수"].values[0]
-                )
-                r_car = (
-                    ch_row["장바구니유저수"].values[0]
-                    / ch_row["식당조회유저수"].values[0]
-                )
-                r_chk = (
-                    ch_row["결제시작유저수"].values[0]
-                    / ch_row["장바구니유저수"].values[0]
-                )
-                r_ord = (
-                    ch_row["주문완료유저수"].values[0]
-                    / ch_row["결제시작유저수"].values[0]
-                )
-            else:
-                r_vis, r_vie, r_car, r_chk, r_ord = 1.0, 0.9, 0.8, 0.9, 0.9
+            return row["traffic_source"]
 
-            v_visit = int(row["방문"] * 0.25 * r_vis)
-            v_view = int(v_visit * r_vie)
-            v_cart = int(v_view * r_car)
-            v_checkout = int(v_cart * r_chk)
-            v_order = int(v_checkout * r_ord)
+    ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
+    ev_signup["sign_up_dt"] = pd.to_datetime(ev_signup["event_datetime"])
+    ev_signup["가입월"] = ev_signup["sign_up_dt"].dt.strftime("%Y-%m")
 
-        weekly_records.append(
-            {
-                "주차": week_str,
-                "집단": selected_group,
-                "방문": v_visit,
-                "식당조회": v_view,
-                "장바구니": v_cart,
-                "결제시작": v_checkout,
-                "주문": v_order,
-            }
-        )
+    # 고객별 첫 가입 정보
+    user_signup = ev_signup.sort_values("sign_up_dt").groupby("customer_id").first().reset_index()
 
-df_weekly = pd.DataFrame(weekly_records)
+    # 이벤트 매핑
+    user_events = events_df.merge(user_signup[['customer_id', '가입채널', '가입월', 'sign_up_dt']], on='customer_id', how='inner')
+    events_by_cust = user_events.groupby('customer_id')['event_name'].unique().to_dict()
 
-step_mapping = {
-    "방문 → 식당조회": ("방문", "식당조회"),
+    # 30일 이내 주문 완료 매핑
+    orders_copy = orders_df.copy()
+    orders_copy['order_dt'] = pd.to_datetime(orders_copy['order_datetime'])
+    user_orders = orders_copy.merge(user_signup[['customer_id', 'sign_up_dt']], on='customer_id', how='inner')
+    user_orders['days_to_order'] = (user_orders['order_dt'] - user_orders['sign_up_dt']).dt.total_seconds() / (24 * 3600)
+    first_orders_30d_cids = set(user_orders[(user_orders['days_to_order'] >= 0) & (user_orders['days_to_order'] <= 30)]['customer_id'].unique())
+
+    # 고객별 퍼널 단계 도달 집계 데이터 생성
+    cust_summary = user_signup[['customer_id', '가입채널', '가입월']].copy()
+    cust_summary['has_view'] = cust_summary['customer_id'].apply(lambda cid: 'view_restaurant' in events_by_cust.get(cid, []))
+    cust_summary['has_cart'] = cust_summary['customer_id'].apply(lambda cid: 'add_to_cart' in events_by_cust.get(cid, []))
+    cust_summary['has_checkout'] = cust_summary['customer_id'].apply(lambda cid: 'begin_checkout' in events_by_cust.get(cid, []))
+    cust_summary['has_first_order_30d'] = cust_summary['customer_id'].isin(first_orders_30d_cids)
+
+    # 필터링된 년월 범위 반영
+    f_months = f_funnel["년월"].unique().tolist()
+    cust_summary_filtered = cust_summary[cust_summary["가입월"].isin(f_months)]
+
+    # 월별 전체 가입자 수
+    total_monthly_signups = cust_summary_filtered.groupby("가입월")["customer_id"].nunique().to_dict()
+
+    # 선택한 집단의 월별 지표 집계
+    selected_cust = cust_summary_filtered[cust_summary_filtered["가입채널"] == selected_group]
+    group_monthly = selected_cust.groupby("가입월").agg(
+        가입자=('customer_id', 'nunique'),
+        식당조회=('has_view', 'sum'),
+        장바구니=('has_cart', 'sum'),
+        결제시작=('has_checkout', 'sum'),
+        첫주문30일=('has_first_order_30d', 'sum')
+    ).reindex(f_months, fill_value=0).reset_index()
+
+    group_monthly["전체가입자"] = group_monthly["가입월"].map(lambda x: total_monthly_signups.get(x, 0))
+    group_monthly["그외가입자"] = group_monthly["전체가입자"] - group_monthly["가입자"]
+    group_monthly["그외가입자"] = group_monthly["그외가입자"].apply(lambda x: max(0, x))
+
+    df_drill_monthly = group_monthly
+else:
+    # 기본 폴백 데이터 구조
+    f_months = f_funnel["년월"].unique().tolist()
+    df_drill_monthly = pd.DataFrame({
+        "가입월": f_months,
+        "가입자": [0]*len(f_months),
+        "식당조회": [0]*len(f_months),
+        "장바구니": [0]*len(f_months),
+        "결제시작": [0]*len(f_months),
+        "첫주문30일": [0]*len(f_months),
+        "그외가입자": [0]*len(f_months),
+    })
+
+# 단계 수식 매핑
+step_calc_mapping = {
+    "가입 → 30일 첫 주문": ("가입자", "첫주문30일"),
+    "가입 → 식당조회": ("가입자", "식당조회"),
     "식당조회 → 장바구니": ("식당조회", "장바구니"),
     "장바구니 → 결제시작": ("장바구니", "결제시작"),
-    "결제시작 → 주문": ("결제시작", "주문"),
+    "결제시작 → 30일 첫 주문": ("결제시작", "첫주문30일"),
 }
 
-prev_col, curr_col = step_mapping[selected_step]
+denom_col, num_col = step_calc_mapping[selected_step]
 
-chart_weekly_records = []
-for i, (idx, row) in enumerate(df_weekly.iterrows()):
-    p_val = row[prev_col]
-    c_val = row[curr_col]
+chart1_records = []
+for idx, row in df_drill_monthly.iterrows():
+    denom_val = row[denom_col]
+    num_val = row[num_col]
 
-    if p_val is None or pd.isna(p_val) or p_val == 0:
+    # 직전 단계 수치가 0인 경우 None 처리 (0%로 직선화되는 오류 방지)
+    if pd.isna(denom_val) or denom_val == 0:
         rate = None
-        p_val_display = None
-        c_val_display = None
     else:
-        rate = round((c_val / p_val) * 100, 1)
-        p_val_display = int(p_val)
-        c_val_display = int(c_val)
+        rate = round((num_val / denom_val) * 100, 1)
 
-    chart_weekly_records.append(
+    chart1_records.append(
         {
-            "주차": row["주차"],
-            "집단": row["집단"],
+            "가입월": row["가입월"],
             "전환율": rate,
-            "직전단계유저수": p_val_display,
-            "현재단계유저수": c_val_display,
+            "분모": denom_val,
+            "분자": num_val,
         }
     )
 
-df_chart_weekly = pd.DataFrame(chart_weekly_records)
+df_chart1 = pd.DataFrame(chart1_records)
 
-fig_drill = px.line(
-    df_chart_weekly,
-    x="주차",
+# 차트 ① (위): 고른 집단의 가입월별 선택 단계 전환율
+fig_drill_1 = px.line(
+    df_chart1,
+    x="가입월",
     y="전환율",
     markers=True,
-    title=f"① {selected_group}의 주별 {selected_step} 전환율",
-    custom_data=["직전단계유저수", "현재단계유저수"],
+    title=f"① {selected_group}의 가입월별 {selected_step} 전환율",
+    custom_data=["분모", "분자"],
 )
 
-fig_drill.update_traces(
+fig_drill_1.update_traces(
     connectgaps=False,
-    hovertemplate="<b>주차: %{x}</b><br>전환율: %{y}%<br>직전 단계 유저수: %{customdata[0]:,}명<br>현재 단계 유저수: %{customdata[1]:,}명<extra></extra>",
+    hovertemplate="<b>가입월: %{x}</b><br>전환율: %{y:.1f}%<br>직전단계 수(분모): %{customdata[0]:,}명<br>달성 수(분자): %{customdata[1]:,}명<extra></extra>",
 )
 
-fig_drill.update_layout(
+fig_drill_1.update_layout(
     yaxis=dict(range=[0, 115]),
-    xaxis_title="주차",
+    xaxis_title="가입월",
     yaxis_title="전환율 (%)",
     template="plotly_white",
 )
 
-st.plotly_chart(fig_drill, width="stretch")
-st.caption("모든 갈래가 같은 시점에 함께 움직였다면, 그 축은 원인이 아닙니다.")
+st.plotly_chart(fig_drill_1, width="stretch")
+st.caption("모든 갈래가 함께 움직였다면, 그 축은 원인이 아닙니다.")
+
+# 차트 ② (아래): 가입월별 가입자 수 구성 (선택한 집단(진한 남색) vs 그 외 집단(회색))
+stack_records = []
+for idx, row in df_drill_monthly.iterrows():
+    stack_records.append(
+        {"가입월": row["가입월"], "구분": selected_group, "가입자수": row["가입자"]}
+    )
+    stack_records.append(
+        {"가입월": row["가입월"], "구분": "그 외 집단", "가입자수": row["그외가입자"]}
+    )
+
+df_chart2 = pd.DataFrame(stack_records)
+
+color_map = {selected_group: "#1f77b4", "그 외 집단": "#d3d3d3"}
+
+fig_drill_2 = px.bar(
+    df_chart2,
+    x="가입월",
+    y="가입자수",
+    color="구분",
+    color_discrete_map=color_map,
+    barmode="stack",
+    title=f"② 가입월별 가입자 수 구성 ({selected_group} vs 그 외)",
+)
+
+fig_drill_2.update_traces(
+    hovertemplate="<b>가입월: %{x}</b><br>구분: %{fullData.name}<br>가입자 수: %{y:,}명<extra></extra>"
+)
+
+fig_drill_2.update_layout(
+    xaxis_title="가입월",
+    yaxis_title="가입자 수 (명)",
+    template="plotly_white",
+    legend_title_text="집단 구분",
+)
+
+st.plotly_chart(fig_drill_2, width="stretch")
+st.caption(
+    "전체 전환율이 움직인 시점에 이 집단의 비중이 함께 바뀌었다면 구성 변화가 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다."
+)
+
+# 맨 아래 AI 해설 영역
+with st.expander(f"🤖 AI 해설 · {selected_group}", expanded=False):
+    st.write(AI_NOTES.get(selected_group, "이 집단의 해설은 아직 없습니다."))
+    st.caption(AI_SOURCE)
