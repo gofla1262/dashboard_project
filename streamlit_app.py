@@ -8,11 +8,11 @@ import streamlit as st
 # ==========================================
 ACCENT, GRAY = "#1F3A5F", "#BDBDBD"
 px.defaults.color_discrete_map = {
-    "INSTA_첫주문쿠폰": ACCENT, 
-    "organic": "#8C8C8C", 
+    "INSTA_첫주문쿠폰": ACCENT,
+    "organic": "#8C8C8C",
     "NAVER_검색광고": "#A6A6A6",
-    "GOOGLE_앱설치": GRAY, 
-    "친구초대": "#DADADA", 
+    "GOOGLE_앱설치": GRAY,
+    "친구초대": "#DADADA",
 }
 px.defaults.color_discrete_sequence = [GRAY]
 
@@ -62,7 +62,7 @@ st.markdown(
         div[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
             border-color: #E0E0E0 !important;
         }}
-        div[data-testid="stSidebar"] div[data-baseweb="select"] > div:focus-within, 
+        div[data-testid="stSidebar"] div[data-baseweb="select"] > div:focus-within,
         div[data-testid="stSidebar"] div[data-baseweb="select"] > div:hover {{
             border-color: {ACCENT} !important;
         }}
@@ -118,18 +118,6 @@ GOOGLE_앱설치,454,454,435,397,364,360
 
 df_channel_step = pd.read_csv(io.StringIO(csv_channel_step_data))
 
-# [데이터 3] 가입채널별 초기 이탈률
-csv_channel_churn_data = """가입 채널,고객 수,초기 이탈률
-organic,774,29.3%
-INSTA_첫주문쿠폰,516,59.1%
-NAVER_검색광고,478,29.3%
-GOOGLE_앱설치,360,30.3%
-친구초대,244,27.5%
-전체 합계,2372,35.8%"""
-
-df_channel_churn = pd.read_csv(io.StringIO(csv_channel_churn_data))
-df_channel_churn = df_channel_churn.rename(columns=lambda x: x.strip())
-
 # AI 해설 메시지 및 출처 정의
 AI_NOTES = {
     "INSTA_첫주문쿠폰": "인스타그램 첫주문쿠폰 유입 집단은 프로모션 진입 특성상 유입 모수는 크나, 장바구니 및 결제 진입 과정에서 타 채널 대비 초기 이탈률이 크게 발생하는 경향을 보입니다.",
@@ -176,12 +164,7 @@ f_channel_step = df_channel_step[
     df_channel_step["가입채널"].isin(selected_channels)
 ].copy()
 
-f_churn = df_channel_churn[
-    (df_channel_churn["가입 채널"] != "전체 합계")
-    & (df_channel_churn["가입 채널"].isin(selected_channels))
-].copy()
-
-if f_funnel.empty or f_channel_step.empty or f_churn.empty:
+if f_funnel.empty or f_channel_step.empty:
     st.warning("선택한 조건에 해당하는 데이터가 없습니다. 필터를 바꿔 주세요.")
     st.stop()
 
@@ -196,7 +179,44 @@ tab1, tab2, tab3, tab4 = st.tabs(["📋 개요", "🔍 탐색", "💡 액션", "
 with tab1:
     total_visits = f_funnel["방문"].sum()
     total_orders = f_funnel["주문"].sum()
-    total_conversion_rate = (total_orders / total_visits * 100) if total_visits > 0 else 0
+    
+    # 방문 후 7일 내 주문 전환율 계산 (이벤트 로그 & 주문 로그 기반)
+    visit_7d_rate_str = "데이터 없음"
+    if events_df is not None and orders_df is not None:
+        clean_events = events_df[
+            ~events_df['customer_id'].astype(str).str.startswith('T', na=False)
+        ].copy()
+        clean_events = clean_events.drop_duplicates(
+            subset=['session_id', 'event_datetime', 'event_name'], keep='first'
+        )
+        clean_orders = orders_df[
+            ~orders_df['customer_id'].astype(str).str.startswith('T', na=False)
+        ].copy()
+
+        clean_events['event_dt'] = pd.to_datetime(clean_events['event_datetime'])
+        clean_events['년월'] = clean_events['event_dt'].dt.strftime('%Y-%m')
+        
+        filtered_events = clean_events[
+            (clean_events['년월'] >= selected_months[0]) & 
+            (clean_events['년월'] <= selected_months[1])
+        ]
+        
+        c_visit_kpi = len(filtered_events['session_id'].unique())
+        session_event_map_kpi = filtered_events.groupby('session_id')['event_name'].unique().to_dict()
+        
+        clean_orders['order_dt'] = pd.to_datetime(clean_orders['order_datetime'])
+        clean_orders['년월'] = clean_orders['order_dt'].dt.strftime('%Y-%m')
+        filtered_orders_kpi = clean_orders[
+            (clean_orders['년월'] >= selected_months[0]) & 
+            (clean_orders['년월'] <= selected_months[1])
+        ]
+        
+        order_sessions_kpi = set(filtered_orders_kpi['session_id'].unique()) if 'session_id' in filtered_orders_kpi.columns else set()
+        c_order_kpi = len(set(session_event_map_kpi.keys()).intersection(order_sessions_kpi)) if order_sessions_kpi else len(filtered_orders_kpi['customer_id'].unique())
+        
+        if c_visit_kpi > 0:
+            visit_7d_rate = (c_order_kpi / c_visit_kpi) * 100
+            visit_7d_rate_str = f"{visit_7d_rate:.1f}%"
 
     # INSTA_첫주문쿠폰 주문 전환율 계산 (이벤트 로그 기반)
     insta_rate_str = "데이터 없음"
@@ -227,36 +247,72 @@ with tab1:
             st.metric(label="1단계 : 전체 방문 수", value=f"{total_visits:,}명")
     with col2:
         with st.container(border=True):
-            st.metric(label="📈 전체 누적 전환율 (방문→주문)", value=f"{total_conversion_rate:.1f}%")
+            st.metric(label="📈 방문 후 7일 내 주문 전환율", value=visit_7d_rate_str)
     with col3:
         with st.container(border=True):
             st.metric(label="🎯 INSTA_첫주문쿠폰 주문 전환율", value=insta_rate_str)
 
     st.markdown("---")
-    st.subheader("📊 전체 기간 단계별 퍼널 흐름 및 주별 주문 전환율")
+    st.subheader("📊 방문 후 7일 이내 퍼널 단계별 세션 현황 및 가입채널별 주별 7일 이내 주문 전환율")
 
     funnel_col1, funnel_col2 = st.columns(2)
 
     with funnel_col1:
         with st.container(border=True):
-            funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
-            funnel_values = [
-                f_funnel["방문"].sum(),
-                f_funnel["식당조회"].sum(),
-                f_funnel["장바구니"].sum(),
-                f_funnel["결제시작"].sum(),
-                f_funnel["주문"].sum(),
-            ]
+            if events_df is not None and orders_df is not None:
+                clean_events = events_df[
+                    ~events_df['customer_id'].astype(str).str.startswith('T', na=False)
+                ].copy()
+                
+                clean_events = clean_events.drop_duplicates(
+                    subset=['session_id', 'event_datetime', 'event_name'], keep='first'
+                )
+                
+                clean_orders = orders_df[
+                    ~orders_df['customer_id'].astype(str).str.startswith('T', na=False)
+                ].copy()
+
+                clean_events['event_dt'] = pd.to_datetime(clean_events['event_datetime'])
+                clean_events['년월'] = clean_events['event_dt'].dt.strftime('%Y-%m')
+                
+                filtered_events = clean_events[
+                    (clean_events['년월'] >= selected_months[0]) & 
+                    (clean_events['년월'] <= selected_months[1])
+                ]
+
+                session_event_map = filtered_events.groupby('session_id')['event_name'].unique().to_dict()
+
+                c_visit = len(filtered_events['session_id'].unique())
+                c_view = sum(1 for evs in session_event_map.values() if 'view_restaurant' in evs)
+                c_cart = sum(1 for evs in session_event_map.values() if 'add_to_cart' in evs)
+                c_checkout = sum(1 for evs in session_event_map.values() if 'begin_checkout' in evs)
+                
+                # 주문 데이터도 사이드바 기간 필터(selected_months) 적용
+                clean_orders['order_dt'] = pd.to_datetime(clean_orders['order_datetime'])
+                clean_orders['년월'] = clean_orders['order_dt'].dt.strftime('%Y-%m')
+                filtered_orders = clean_orders[
+                    (clean_orders['년월'] >= selected_months[0]) & 
+                    (clean_orders['년월'] <= selected_months[1])
+                ]
+                
+                order_sessions = set(filtered_orders['session_id'].unique()) if 'session_id' in filtered_orders.columns else set()
+                c_order = len(set(session_event_map.keys()).intersection(order_sessions)) if order_sessions else len(filtered_orders['customer_id'].unique())
+
+                funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
+                funnel_values = [c_visit, c_view, c_cart, c_checkout, c_order]
+            else:
+                funnel_stages = ["방문", "식당조회", "장바구니", "결제시작", "주문"]
+                funnel_values = [0, 0, 0, 0, 0]
 
             df_total_funnel = pd.DataFrame(
-                {"단계": funnel_stages, "고객수": funnel_values}
+                {"단계": funnel_stages, "세션수": funnel_values}
             )
 
             fig_funnel = px.funnel(
                 df_total_funnel,
-                x="고객수",
+                x="세션수",
                 y="단계",
-                title="전체 기간 퍼널 단계별 전환 현황",
+                title="방문 후 7일 이내 퍼널 단계별 전환 현황",
             )
             fig_funnel.update_layout(template="plotly_white")
             st.plotly_chart(fig_funnel, width="stretch")
@@ -264,7 +320,7 @@ with tab1:
     with funnel_col2:
         with st.container(border=True):
             if events_df is not None and orders_df is not None:
-                ev = events_df[events_df["event_name"] == "sign_up"].copy()
+                ev_signup = events_df[events_df["event_name"] == "sign_up"].copy()
                 
                 def map_channel(row):
                     if row["traffic_source"] == "organic":
@@ -274,20 +330,32 @@ with tab1:
                     else:
                         return row["traffic_source"]
                 
-                ev["가입채널"] = ev.apply(map_channel, axis=1)
-                ev["event_dt"] = pd.to_datetime(ev["event_datetime"])
-                ev["주시작일"] = (ev["event_dt"] - pd.to_timedelta(ev["event_dt"].dt.weekday, unit="d")).dt.strftime('%Y-%m-%d')
+                ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
+                ev_signup["sign_up_dt"] = pd.to_datetime(ev_signup["event_datetime"])
+                ev_signup["가입월"] = ev_signup["sign_up_dt"].dt.strftime('%Y-%m')
+                ev_signup["주시작일"] = (ev_signup["sign_up_dt"] - pd.to_timedelta(ev_signup["sign_up_dt"].dt.weekday, unit="d")).dt.strftime('%Y-%m-%d')
                 
-                signup_users = ev[['customer_id', '가입채널', '주시작일']].drop_duplicates(subset=['customer_id'])
-                ordered_users = orders_df[['customer_id']].drop_duplicates()
-                ordered_users["has_ordered"] = 1
+                ev_signup_filtered = ev_signup[
+                    (ev_signup["가입월"] >= selected_months[0]) & 
+                    (ev_signup["가입월"] <= selected_months[1])
+                ]
                 
-                merged_ev = signup_users.merge(ordered_users, on="customer_id", how="left")
-                merged_ev["has_ordered"] = merged_ev["has_ordered"].fillna(0)
+                user_signup_info = ev_signup_filtered[['customer_id', '가입채널', '주시작일', 'sign_up_dt']].sort_values('sign_up_dt').groupby('customer_id').first().reset_index()
                 
-                weekly_group = merged_ev.groupby(["주시작일", "가입채널"]).agg(
+                orders_copy = orders_df.copy()
+                orders_copy['order_dt'] = pd.to_datetime(orders_copy['order_datetime'])
+                
+                merged_orders = orders_copy.merge(user_signup_info[['customer_id', 'sign_up_dt']], on='customer_id', how='inner')
+                merged_orders['hours_to_order'] = (merged_orders['order_dt'] - merged_orders['sign_up_dt']).dt.total_seconds() / 3600
+                
+                orders_7d_valid = merged_orders[(merged_orders['hours_to_order'] >= 0) & (merged_orders['hours_to_order'] <= 24 * 7)]
+                ordered_7d_cids = set(orders_7d_valid['customer_id'].unique())
+                
+                user_signup_info['has_ordered_7d'] = user_signup_info['customer_id'].isin(ordered_7d_cids).astype(int)
+                
+                weekly_group = user_signup_info.groupby(["주시작일", "가입채널"]).agg(
                     분모_가입고객수=("customer_id", "nunique"),
-                    분자_주문고객수=("has_ordered", "sum")
+                    분자_주문고객수=("has_ordered_7d", "sum")
                 ).reset_index()
                 
                 weekly_group["주문전환율"] = round(weekly_group["분자_주문고객수"] * 100.0 / weekly_group["분모_가입고객수"], 1)
@@ -296,6 +364,8 @@ with tab1:
                 if len(valid_weeks) > 2:
                     target_weeks = valid_weeks[:-2]
                     weekly_group = weekly_group[weekly_group['주시작일'].isin(target_weeks)]
+                else:
+                    weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_주문고객수", "주문전환율"])
             else:
                 weekly_group = pd.DataFrame(columns=["주시작일", "가입채널", "분모_가입고객수", "분자_주문고객수", "주문전환율"])
 
@@ -307,16 +377,16 @@ with tab1:
                 y="주문전환율",
                 color="가입채널",
                 markers=True,
-                title="가입채널별 주별 주문 전환율",
+                title="가입채널별 주별 7일 이내 주문 전환율",
                 custom_data=["분모_가입고객수", "분자_주문고객수"]
             )
             fig_weekly_pay.update_traces(
-                hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>주문전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>주문고객수: %{customdata[1]:,}명<extra></extra>"
+                hovertemplate="<b>채널: %{fullData.name}</b><br>주시작일: %{x}<br>7일내 주문전환율: %{y:.1f}%<br>가입고객수: %{customdata[0]:,}명<br>7일내 주문고객수: %{customdata[1]:,}명<extra></extra>"
             )
             fig_weekly_pay.update_layout(
                 yaxis=dict(range=[0, 115]),
                 xaxis_title="주시작일",
-                yaxis_title="주문전환율 (%)",
+                yaxis_title="7일 이내 주문전환율 (%)",
                 template="plotly_white"
             )
             st.plotly_chart(fig_weekly_pay, width="stretch")
@@ -339,17 +409,30 @@ with tab1:
                         return row["traffic_source"]
                 
                 ev_signup["가입채널"] = ev_signup.apply(map_channel, axis=1)
+                ev_signup["sign_up_dt"] = pd.to_datetime(ev_signup["event_datetime"])
+                ev_signup["가입월"] = ev_signup["sign_up_dt"].dt.strftime('%Y-%m')
                 
-                signup_users_df = ev_signup[['customer_id', '가입채널']].drop_duplicates()
-                ordered_users_df = orders_df[['customer_id']].drop_duplicates()
-                ordered_users_df['is_ordered'] = 1
+                ev_signup_filtered = ev_signup[
+                    (ev_signup["가입월"] >= selected_months[0]) & 
+                    (ev_signup["가입월"] <= selected_months[1])
+                ]
                 
-                merged_order_df = pd.merge(signup_users_df, ordered_users_df, on='customer_id', how='left')
-                merged_order_df['is_ordered'] = merged_order_df['is_ordered'].fillna(0)
+                user_signup_info = ev_signup_filtered[['customer_id', '가입채널', 'sign_up_dt']].sort_values('sign_up_dt').groupby('customer_id').first().reset_index()
                 
-                channel_order_summary = merged_order_df.groupby('가입채널').agg(
+                orders_copy = orders_df.copy()
+                orders_copy['order_dt'] = pd.to_datetime(orders_copy['order_datetime'])
+                
+                merged_orders = orders_copy.merge(user_signup_info[['customer_id', 'sign_up_dt']], on='customer_id', how='inner')
+                merged_orders['hours_to_order'] = (merged_orders['order_dt'] - merged_orders['sign_up_dt']).dt.total_seconds() / 3600
+                
+                orders_7d_valid = merged_orders[(merged_orders['hours_to_order'] >= 0) & (merged_orders['hours_to_order'] <= 24 * 7)]
+                ordered_7d_cids = set(orders_7d_valid['customer_id'].unique())
+                
+                user_signup_info['has_ordered_7d'] = user_signup_info['customer_id'].isin(ordered_7d_cids).astype(int)
+                
+                channel_order_summary = user_signup_info.groupby('가입채널').agg(
                     denominator=('customer_id', 'nunique'),
-                    numerator=('is_ordered', 'sum')
+                    numerator=('has_ordered_7d', 'sum')
                 ).reset_index()
                 
                 channel_order_summary['conversion_rate'] = round((channel_order_summary['numerator'] / channel_order_summary['denominator']) * 100, 1)
@@ -367,7 +450,7 @@ with tab1:
                 channel_order_summary,
                 x="가입채널",
                 y="conversion_rate",
-                title="가입채널별 주문전환율 (%)",
+                title="가입채널별 7일 이내 주문전환율 (%)",
                 text="conversion_rate",
                 custom_data=["denominator", "numerator"]
             )
@@ -375,7 +458,7 @@ with tab1:
                 marker_color=colors1,
                 texttemplate="%{text:.1f}%",
                 textposition="outside",
-                hovertemplate="<b>가입채널: %{x}</b><br>주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>주문 고객수: %{customdata[1]:,}명<extra></extra>"
+                hovertemplate="<b>가입채널: %{x}</b><br>7일이내 주문전환율: %{y:.1f}%<br>가입 고객수: %{customdata[0]:,}명<br>7일이내 주문 고객수: %{customdata[1]:,}명<extra></extra>"
             )
             fig1.update_layout(
                 yaxis=dict(
@@ -387,45 +470,75 @@ with tab1:
                     ]
                 ),
                 xaxis_title="가입채널",
-                yaxis_title="주문전환율 (%)",
+                yaxis_title="7일 이내 주문전환율 (%)",
                 template="plotly_white",
             )
             st.plotly_chart(fig1, width="stretch")
 
     with chart_col2:
         with st.container(border=True):
-            df_churn_filtered = f_churn.copy()
-            df_churn_filtered["초기 이탈률_num"] = (
-                df_churn_filtered["초기 이탈률"].str.rstrip("%").astype(float)
-            )
-            df_churn_filtered = df_churn_filtered.sort_values(
-                by="초기 이탈률_num", ascending=False
-            )
+            if events_df is not None and orders_df is not None:
+                ev_churn = events_df[events_df["event_name"] == "sign_up"].copy()
+                ev_churn["가입채널"] = ev_churn.apply(map_channel, axis=1)
+                ev_churn["sign_up_dt"] = pd.to_datetime(ev_churn["event_datetime"])
+                ev_churn["가입월"] = ev_churn["sign_up_dt"].dt.strftime('%Y-%m')
+                
+                ev_churn_filtered = ev_churn[
+                    (ev_churn["가입월"] >= selected_months[0]) & 
+                    (ev_churn["가입월"] <= selected_months[1])
+                ]
+                
+                churn_user_info = ev_churn_filtered[['customer_id', '가입채널', 'sign_up_dt']].sort_values('sign_up_dt').groupby('customer_id').first().reset_index()
+                
+                orders_copy_c = orders_df.copy()
+                orders_copy_c['order_dt'] = pd.to_datetime(orders_copy_c['order_datetime'])
+                
+                merged_orders_c = orders_copy_c.merge(churn_user_info[['customer_id', 'sign_up_dt']], on='customer_id', how='inner')
+                merged_orders_c['hours_to_order'] = (merged_orders_c['order_dt'] - merged_orders_c['sign_up_dt']).dt.total_seconds() / 3600
+                
+                orders_30d_c = merged_orders_c[(merged_orders_c['hours_to_order'] >= 0) & (merged_orders_c['hours_to_order'] <= 30 * 24)]
+                ordered_30d_cids_c = set(orders_30d_c['customer_id'].unique())
+                
+                churn_user_info['has_ordered_30d'] = churn_user_info['customer_id'].isin(ordered_30d_cids_c).astype(int)
+                
+                channel_churn_summary = churn_user_info.groupby('가입채널').agg(
+                    고객수=('customer_id', 'nunique'),
+                    주문고객수=('has_ordered_30d', 'sum')
+                ).reset_index()
+                
+                channel_churn_summary['초기 이탈률_num'] = round(
+                    ((channel_churn_summary['고객수'] - channel_churn_summary['주문고객수']) / channel_churn_summary['고객수']) * 100, 1
+                )
+                channel_churn_summary = channel_churn_summary[channel_churn_summary['가입채널'].isin(selected_channels)]
+                channel_churn_summary = channel_churn_summary.sort_values(by='초기 이탈률_num', ascending=False)
+            else:
+                channel_churn_summary = pd.DataFrame(columns=['가입채널', '고객수', '초기 이탈률_num'])
+
             colors2 = [
                 ACCENT if ch == "INSTA_첫주문쿠폰" else GRAY
-                for ch in df_churn_filtered["가입 채널"]
+                for ch in channel_churn_summary["가입채널"]
             ]
 
             fig2 = px.bar(
-                df_churn_filtered,
-                x="가입 채널",
+                channel_churn_summary,
+                x="가입채널",
                 y="초기 이탈률_num",
-                title="가입채널별 초기 이탈률",
+                title="가입채널별 초기 이탈률 (30일 이내)",
                 text="초기 이탈률_num",
-                custom_data=["고객 수"],
+                custom_data=["고객수"],
             )
             fig2.update_traces(
                 marker_color=colors2,
                 texttemplate="%{text:.1f}%",
                 textposition="outside",
-                hovertemplate="<b>%{x}</b><br>초기 이탈률: %{y:.1f}%<br>고객 수 (n): %{customdata[0]:,}<extra></extra>",
+                hovertemplate="<b>%{x}</b><br>초기 이탈률 (30일): %{y:.1f}%<br>고객 수 (n): %{customdata[0]:,}<extra></extra>",
             )
             fig2.update_layout(
                 yaxis=dict(
                     range=[
                         0,
-                        max(df_churn_filtered["초기 이탈률_num"]) * 1.15
-                        if not df_churn_filtered.empty
+                        max(channel_churn_summary["초기 이탈률_num"]) * 1.15
+                        if not channel_churn_summary.empty
                         else 100,
                     ]
                 ),
@@ -811,11 +924,11 @@ with tab4:
     up_col1, up_col2 = st.columns(2)
 
     with up_col1:
-        uploaded_orders = st.file_uploader("주문 데이터 업로드 (orders.csv)", type=["csv"])
+        uploaded_orders = st.file_uploader("orders.csv", type=["csv"])
         if uploaded_orders is not None:
             st.success("orders.csv 파일이 정상적으로 입력되었습니다.")
 
     with up_col2:
-        uploaded_events = st.file_uploader("앱 이벤트 로그 업로드 (app_events.csv)", type=["csv"])
+        uploaded_events = st.file_uploader("app_events.csv", type=["csv"])
         if uploaded_events is not None:
             st.success("app_events.csv 파일이 정상적으로 입력되었습니다.")
